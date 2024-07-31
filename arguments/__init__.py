@@ -60,6 +60,9 @@ class ModelParams(ParamGroup):
         self.multi_view_max_angle = 30
         self.multi_view_min_dis = 0.01
         self.multi_view_max_dis = 1.5
+
+        self.load_depth = False
+        self.load_normal = False
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

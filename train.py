@@ -189,12 +189,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             weight = opt.single_view_weight # 默认0.015
             normal = render_pkg["rendered_normal"]
             depth_normal = render_pkg["depth_normal"]
+            gt_normal = viewpoint_cam.normal.cuda()
 
             image_weight = (1.0 - get_img_grad_weight(gt_image))    # 由gt图像的归一化梯度计算 梯度权重(1, H, W)：边缘、纹理区域的权重接近0，平滑区域的权重接近1
             image_weight = (image_weight).clamp(0,1).detach() ** 5  # 5次方
             image_weight = erode(image_weight[None,None]).squeeze() # 腐蚀操作，缩小值接近1的区域，即缩小平滑区域
-            # 平滑区域的权重大
-            normal_loss = weight * (image_weight * (((depth_normal - normal)).abs().sum(0))).mean()
+            # 从渲染深度图计算的normal 与 渲染的normal之间的Loss，平滑区域的权重大
+            # normal_loss = weight * (image_weight * (((depth_normal - normal)).abs().sum(0))).mean()
+            # gt normal 与 渲染的normal之间的Loss，平滑区域的权重大
+            normal_loss = weight * (image_weight * (((gt_normal - normal)).abs().sum(0))).mean()
             loss += (normal_loss)
 
             # normal_grad_x = (normal[:,1:-1,:-2] - normal[:,1:-1,2:]).abs()

@@ -32,7 +32,7 @@ def erode(bin_img, ksize=12):
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy,
                  image_width, image_height,
-                 image_path, image_name, uid,
+                 image_path, normal_path, image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, 
                  ncc_scale=1.0,
                  preload_img=True, data_device = "cuda"
@@ -49,6 +49,7 @@ class Camera(nn.Module):
         self.FoVy = FoVy
         self.image_name = image_name
         self.image_path = image_path
+        self.normal_path = normal_path
 
         try:
             self.data_device = torch.device(data_device)
@@ -82,6 +83,11 @@ class Camera(nn.Module):
                 self.mask = erode(self.mask[None,None].float()).squeeze()
                 self.mask = torch.nn.functional.interpolate(self.mask[None,None], size=(image_height,image_width), mode='bilinear', align_corners=False).squeeze()
                 self.mask = (self.mask < 0.5).to(self.data_device)
+
+        if self.normal_path is not None:
+            normal_np = np.load(self.normal_path).astype(np.float32)   # H W 3
+            normal_tensor = torch.tensor(cv2.resize(normal_np, (image_width, image_height), interpolation=cv2.INTER_NEAREST)).to(self.data_device)
+            self.normal = normal_tensor.permute((2, 0, 1))  # 3 H W
 
         self.image_width = image_width
         self.image_height = image_height

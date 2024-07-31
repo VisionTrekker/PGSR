@@ -20,11 +20,17 @@ def psnr(img1, img2):
     return 20 * torch.log10(1.0 / torch.sqrt(mse))
 
 def dilate(bin_img, ksize=5):
+    """
+    二值图像的`膨胀`操作，扩张白色区域(值接近1)
+    """
     pad = (ksize - 1) // 2
-    bin_img = F.pad(bin_img, pad=[pad, pad, pad, pad], mode='reflect')
-    out = F.max_pool2d(bin_img, kernel_size=ksize, stride=1, padding=0)
+    bin_img = F.pad(bin_img, pad=[pad, pad, pad, pad], mode='reflect')  # 对二值图像进行反射填充，填充的宽度是2
+    out = F.max_pool2d(bin_img, kernel_size=ksize, stride=1, padding=0) # 最大池化操作，窗口为5，步长为1，
     return out
 
 def erode(bin_img, ksize=5):
+    """
+    二值图像的`腐蚀`操作，扩张黑色区域(值接近0)
+    """
     out = 1 - dilate(1 - bin_img, ksize)
     return out

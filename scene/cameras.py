@@ -61,13 +61,16 @@ class Camera(nn.Module):
         self.preload_img = preload_img
         self.ncc_scale = ncc_scale
         if self.preload_img:
+            # 若预加载图片数据，默认为True
             image = Image.open(self.image_path)
             resized_image = image.resize((image_width, image_height))
             resized_image_rgb = PILtoTorch(resized_image)
             if ncc_scale != 1.0:
+                # DTU、MipNeRf360、TnT数据集使用0.5，即再扩大1倍
                 resized_image = image.resize((int(image_width/ncc_scale), int(image_height/ncc_scale)))
             resized_image_gray = resized_image.convert('L')
             resized_image_gray = PILtoTorch(resized_image_gray)
+            # 即original_image维度为(3, H/2, W/2)，image_gray维度为(1, H, W)
             self.original_image = resized_image_rgb[:3, ...].clamp(0.0, 1.0).to(self.data_device)
             self.image_gray = resized_image_gray.clamp(0.0, 1.0).to(self.data_device)
 

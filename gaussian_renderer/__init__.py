@@ -19,12 +19,18 @@ from utils.sh_utils import eval_sh
 from utils.graphics_utils import normal_from_depth_image
 
 def render_normal(viewpoint_cam, depth, offset=None, normal=None, scale=1):
-    # depth: (H, W), bg_color: (3), alpha: (H, W)
+    """
+    从渲染深度图 计算 法向量
+        viewpoint_cam：当前相机
+        depth: 渲染的深度图，(H, W)
+    """
+    # bg_color: (3), alpha: (H, W)
     # normal_ref: (3, H, W)
-    intrinsic_matrix, extrinsic_matrix = viewpoint_cam.get_calib_matrix_nerf(scale=scale)
-    st = max(int(scale/2)-1,0)
+    intrinsic_matrix, extrinsic_matrix = viewpoint_cam.get_calib_matrix_nerf(scale=scale)   # 获取当前相机的内参矩阵和外参矩阵（世界坐标系到相机坐标系的变换矩阵）
+    st = max(int(scale / 2) - 1, 0) # 如果scale>2，则st为(scale/2)-1的向下取整；否则为0
     if offset is not None:
-        offset = offset[st::scale,st::scale]
+        offset = offset[st::scale,st::scale]    # 如果输入了偏移量，也对其进行采样（减少计算量，并且采样时丢弃初始的行和列避免边缘的影响），采样后的大小为(H-st)//scale
+    # 相机坐标系下的深度图
     normal_ref = normal_from_depth_image(depth[st::scale,st::scale], 
                                             intrinsic_matrix.to(depth.device), 
                                             extrinsic_matrix.to(depth.device), offset)
@@ -105,6 +111,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     rasterizer = PlaneGaussianRasterizer(raster_settings=raster_settings)
 
     if not return_plane:
+        # < 7000代，则执行下面的渲染流程（不渲染法向量）后，直接返回
         rendered_image, radii, out_observe, _, _ = rasterizer(
             means3D = means3D,
             means2D = means2D,
@@ -123,16 +130,20 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                         "radii": radii,
                         "out_observe": out_observe}
         if app_model is not None and pc.use_app:
+            # > 1000代 且 开启曝光补偿，则使用app_model生成app_image
             appear_ab = app_model.appear_ab[torch.tensor(viewpoint_camera.uid).cuda()]
             app_image = torch.exp(appear_ab[0]) * rendered_image + appear_ab[1]
             return_dict.update({"app_image": app_image})
         return return_dict
 
-    global_normal = pc.get_normal(viewpoint_camera)
-    local_normal = global_normal @ viewpoint_camera.world_view_transform[:3,:3]
-    pts_in_cam = means3D @ viewpoint_camera.world_view_transform[:3,:3] + viewpoint_camera.world_view_transform[3,:3]
-    depth_z = pts_in_cam[:, 2]
-    local_distance = (local_normal * pts_in_cam).sum(-1).abs()
+    # > 7000代才返回normal
+    global_normal = pc.get_normal(viewpoint_camera) # 获取世界坐标系下所有高斯的法向量
+    local_normal = global_normal @ viewpoint_camera.world_view_transform[:3,:3] # 当前相机坐标系下 所有高斯的法向量
+    pts_in_cam = means3D @ viewpoint_camera.world_view_transform[:3,:3] + viewpoint_camera.world_view_transform[3,:3]   # 当前相机坐标系下所有高斯中心的坐标
+    depth_z = pts_in_cam[:, 2]  # 高斯在当前相机坐标系下的深度
+    local_distance = (local_normal * pts_in_cam).sum(-1).abs()  # 计算每个高斯中心到法平面的绝对距离
+
+    # (N, 5)，依次存储：当前相机坐标系下的法向量、1.0、高斯中心到法平面的距离
     input_all_map = torch.zeros((means3D.shape[0], 5)).cuda().float()
     input_all_map[:, :3] = local_normal
     input_all_map[:, 3] = 1.0
@@ -166,11 +177,13 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                     }
     
     if app_model is not None and pc.use_app:
+        # > 1000代 且 开启曝光补偿，则使用app_model生成app_image
         appear_ab = app_model.appear_ab[torch.tensor(viewpoint_camera.uid).cuda()]
         app_image = torch.exp(appear_ab[0]) * rendered_image + appear_ab[1]
         return_dict.update({"app_image": app_image})   
 
     if return_depth_normal:
+        # > 7000代，返回从渲染深度图计算的 相机坐标系下的法向量
         depth_normal = render_normal(viewpoint_camera, plane_depth.squeeze()) * (rendered_alpha).detach()
         return_dict.update({"depth_normal": depth_normal})
     

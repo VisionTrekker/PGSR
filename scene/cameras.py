@@ -44,7 +44,7 @@ def process_image(image_path, resolution, ncc_scale):
         loaded_mask = None
         gt_image = resized_image_rgb
         if ncc_scale != 1.0:
-            # DTU、MipNeRf360、TnT数据集使用0.5，即再扩大1倍
+            # DTU、MipNeRf360、TnT数据集使用0.5，即image_width/ncc_scale是原图大小，即保持原图不变
             ncc_resolution = (int(resolution[0] / ncc_scale), int(resolution[1] / ncc_scale))
             resized_image_rgb = PILtoTorch(image, ncc_resolution)
     gray_image = (0.299 * resized_image_rgb[0] + 0.587 * resized_image_rgb[1] + 0.114 * resized_image_rgb[2])[None]
@@ -56,7 +56,8 @@ class Camera(nn.Module):
                  image_path, image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, 
                  ncc_scale=1.0,
-                 preload_img=True, data_device = "cuda"
+                 preload_img=True, data_device = "cuda",
+                 depth_path=None, normal_path=None
                  ):
         super(Camera, self).__init__()
 
@@ -85,14 +86,43 @@ class Camera(nn.Module):
             self.data_device = torch.device("cuda")
 
         self.original_image, self.image_gray, self.mask = None, None, None
-        self.preload_img = preload_img
-        self.ncc_scale = ncc_scale
+        self.preload_img = preload_img  # 默认为True
+        self.ncc_scale = ncc_scale  # 实际为0.5
+
+        resized_depth, resized_normal = None, None
+        self.depth, self.normal = None, None
         if self.preload_img:
             # 若预加载图片数据，默认为True
             gt_image, gray_image, loaded_mask = process_image(self.image_path, self.resolution, ncc_scale)
             self.original_image = gt_image.to(self.data_device)
             self.original_image_gray = gray_image.to(self.data_device)
             self.mask = loaded_mask
+
+            if depth_path is not None:
+                # 读取npy文件
+                depth = np.load(depth_path).astype(np.float32)  # H W
+                resized_depth = cv2.resize(depth, (image_width, image_height), interpolation=cv2.INTER_NEAREST)
+                resized_depth = torch.from_numpy(resized_depth).unsqueeze(0)
+                # 读取png文件
+                # depth = np.array(Image.open(depth_path), dtype=np.float32)  # H W 3
+                # resized_depth = cv2.resize(depth, (image_width, image_height), interpolation=cv2.INTER_NEAREST) # H W 3
+                # resized_depth = resized_depth[:, :, 0]
+                # resized_depth = resized_depth.astype(np.float32) / 255.0
+                # resized_depth = torch.from_numpy(resized_depth).unsqueeze(0)    # 1 H W
+            else:
+                resized_depth = None
+
+            if normal_path is not None:
+                normal = np.load(normal_path).astype(np.float32)  # H W 3
+                resized_normal = cv2.resize(normal, (image_width, image_height), interpolation=cv2.INTER_NEAREST)
+                resized_normal = torch.from_numpy(resized_normal).permute((2, 0, 1))  # 3 H W
+            else:
+                resized_normal = None
+
+            if resized_depth is not None:
+                self.depth = resized_depth.to(self.data_device)
+            if resized_normal is not None:
+                self.normal = resized_normal.to(self.data_device)
 
 
         self.zfar = 100.0

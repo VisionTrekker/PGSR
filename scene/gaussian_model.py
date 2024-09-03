@@ -143,18 +143,22 @@ class GaussianModel:
         return self.opacity_activation(self._opacity)
     
     def get_smallest_axis(self, return_idx=False):
-        rotation_matrices = self.get_rotation_matrix()
-        smallest_axis_idx = self.get_scaling.min(dim=-1)[1][..., None, None].expand(-1, 3, -1)
-        smallest_axis = rotation_matrices.gather(2, smallest_axis_idx)
+        rotation_matrices = self.get_rotation_matrix()  # 各高斯的旋转矩阵
+        smallest_axis_idx = self.get_scaling.min(dim=-1)[1][..., None, None].expand(-1, 3, -1)  # 寻找各高斯的最短轴的索引，再扩展为适合用于选择旋转矩阵的形状
+        smallest_axis = rotation_matrices.gather(2, smallest_axis_idx)  # 从旋转矩阵中提取对应最短轴的列向量
         if return_idx:
             return smallest_axis.squeeze(dim=2), smallest_axis_idx[..., 0, 0]
+        # 默认，只返回最短轴向量
         return smallest_axis.squeeze(dim=2)
     
     def get_normal(self, view_cam):
-        normal_global = self.get_smallest_axis()
-        gaussian_to_cam_global = view_cam.camera_center - self._xyz
-        neg_mask = (normal_global * gaussian_to_cam_global).sum(-1) < 0.0
-        normal_global[neg_mask] = -normal_global[neg_mask]
+        """
+        获取世界坐标系下所有高斯的法向量
+        """
+        normal_global = self.get_smallest_axis()    # 获取世界坐标系下的高斯的法向量，即最短轴向量
+        gaussian_to_cam_global = view_cam.camera_center - self._xyz # 高斯中心 到 当前相机光心的向量
+        neg_mask = (normal_global * gaussian_to_cam_global).sum(-1) < 0.0   # <0，则表示高斯背向相机
+        normal_global[neg_mask] = -normal_global[neg_mask]  # 将背向相机的高斯法向量翻转
         return normal_global
     
     def get_rotation_matrix(self):

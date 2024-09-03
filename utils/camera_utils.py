@@ -44,12 +44,14 @@ def loadCam(args, id, cam_info, resolution_scale):
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY,
-                  image_width=resolution[0], image_height=resolution[1],
+                  image_width=resolution[0], image_height=resolution[1],    # 实际下采样2倍，args.resolution=2
                   image_path=cam_info.image_path,
                   image_name=cam_info.image_name, uid=id, 
                   preload_img=args.preload_img, 
                   ncc_scale=args.ncc_scale,
-                  data_device=args.data_device)
+                  data_device=args.data_device,
+                  depth_path=cam_info.depth_path,
+                  normal_path=cam_info.normal_path)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []

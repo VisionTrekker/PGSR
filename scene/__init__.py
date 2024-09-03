@@ -44,7 +44,8 @@ class Scene:
         self.test_cameras = {}
 
         if os.path.exists(os.path.join(args.source_path, "sparse")):
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
+            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval,
+                                                          load_depth=args.load_depth, load_normal=args.load_normal)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
@@ -80,11 +81,12 @@ class Scene:
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
 
-            # 计算每个相机的最近邻相机
+            # 计算每个train相机的最近邻相机
             print("computing nearest_id")
             self.world_view_transforms = []
             camera_centers = []
             center_rays = []
+            # 遍历所有train相机，添加各train相机中心的世界坐标、
             for id, cur_cam in enumerate(self.train_cameras[resolution_scale]):
                 self.world_view_transforms.append(cur_cam.world_view_transform)
                 camera_centers.append(cur_cam.camera_center)

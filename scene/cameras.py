@@ -35,7 +35,8 @@ class Camera(nn.Module):
                  image_path, image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, 
                  ncc_scale=1.0,
-                 preload_img=True, data_device = "cuda"
+                 preload_img=True, data_device = "cuda",
+                 depth_path=None, normal_path=None
                  ):
         super(Camera, self).__init__()
 
@@ -58,21 +59,51 @@ class Camera(nn.Module):
             self.data_device = torch.device("cuda")
 
         self.original_image, self.image_gray, self.mask = None, None, None
-        self.preload_img = preload_img
-        self.ncc_scale = ncc_scale
+        self.preload_img = preload_img  # 默认为True
+        self.ncc_scale = ncc_scale      # 实际为0.5
+
+        resized_depth, resized_normal = None, None
+        self.depth, self.normal = None, None
         if self.preload_img:
-            # 若预加载图片数据，默认为True
+            # 若预加载图片数据
             image = Image.open(self.image_path)
-            resized_image = image.resize((image_width, image_height))
-            resized_image_rgb = PILtoTorch(resized_image)
+            resized_image = image.resize((image_width, image_height))   # 这里的image_width、height实际是下采样2倍后的，因为-r 2
+            resized_image_rgb = PILtoTorch(resized_image)   # 下采样2倍
+
+            if depth_path is not None:
+                # 读取npy文件
+                depth = np.load(depth_path).astype(np.float32)  # H W
+                resized_depth = cv2.resize(depth, (image_width, image_height), interpolation=cv2.INTER_NEAREST)
+                resized_depth = torch.from_numpy(resized_depth).unsqueeze(0)
+                # 读取png文件
+                # depth = np.array(Image.open(depth_path), dtype=np.float32)  # H W 3
+                # resized_depth = cv2.resize(depth, (image_width, image_height), interpolation=cv2.INTER_NEAREST) # H W 3
+                # resized_depth = resized_depth[:, :, 0]
+                # resized_depth = resized_depth.astype(np.float32) / 255.0
+                # resized_depth = torch.from_numpy(resized_depth).unsqueeze(0)    # 1 H W
+            else:
+                resized_depth = None
+
+            if normal_path is not None:
+                normal = np.load(normal_path).astype(np.float32)  # H W 3
+                resized_normal = cv2.resize(normal, (image_width, image_height), interpolation=cv2.INTER_NEAREST)
+                resized_normal = torch.from_numpy(resized_normal).permute((2, 0, 1))  # 3 H W
+            else:
+                resized_normal = None
+
             if ncc_scale != 1.0:
-                # DTU、MipNeRf360、TnT数据集使用0.5，即再扩大1倍
+                # DTU、MipNeRf360、TnT数据集使用0.5，即image_width/ncc_scale是原图大小，即保持原图不变
                 resized_image = image.resize((int(image_width/ncc_scale), int(image_height/ncc_scale)))
             resized_image_gray = resized_image.convert('L')
-            resized_image_gray = PILtoTorch(resized_image_gray)
+            resized_image_gray = PILtoTorch(resized_image_gray)     # 原图大小
+
             # 即original_image维度为(3, H/2, W/2)，image_gray维度为(1, H, W)
             self.original_image = resized_image_rgb[:3, ...].clamp(0.0, 1.0).to(self.data_device)
             self.image_gray = resized_image_gray.clamp(0.0, 1.0).to(self.data_device)
+            if resized_depth is not None:
+                self.depth = resized_depth.to(self.data_device)
+            if resized_normal is not None:
+                self.normal = resized_normal.to(self.data_device)
 
             # for DTU
             mask_path = image_path.replace("images", "mask")[:-10]
@@ -81,7 +112,7 @@ class Camera(nn.Module):
                 self.mask = torch.tensor(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)).to(self.data_device).squeeze()/255
                 self.mask = erode(self.mask[None,None].float()).squeeze()
                 self.mask = torch.nn.functional.interpolate(self.mask[None,None], size=(image_height,image_width), mode='bilinear', align_corners=False).squeeze()
-                self.mask = (self.mask < 0.5).to(self.data_device)
+                self.mask = (self.mask < 0.5).to(self.data_device)  # 下采样2倍
 
         self.image_width = image_width
         self.image_height = image_height

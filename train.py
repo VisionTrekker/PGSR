@@ -25,6 +25,7 @@ import cv2
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr, erode
+from utils.loss_utils import depth_align, depth_EdgeAwareLogL1, depth_smooth_loss
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 from scene.app_model import AppModel
@@ -102,6 +103,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     app_model.cuda()
     
     if checkpoint:
+        # 如果加载之前已训练的模型参数
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
         app_model.load_weights(scene.model_path)
@@ -115,9 +117,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     ema_single_view_for_log = 0.0
+    depth_loss_log = 0.0
     ema_multi_view_geo_for_log = 0.0
     ema_multi_view_pho_for_log = 0.0
-    normal_loss, geo_loss, ncc_loss = None, None, None
+    normal_loss, depth_loss, geo_loss, ncc_loss = None, None, None, None
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     debug_path = os.path.join(scene.model_path, "debug")
@@ -150,8 +153,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
+        # gt_image维度(3, H/2, W/2)；gt_image_gray维度(1, H, W)
         gt_image, gt_image_gray = viewpoint_cam.get_image()
+
         if iteration > 1000 and opt.exposure_compensation:
+            # > 1000代，且设置了进行曝光补偿，则use_app设为True，表示在渲染那中使用app_model
             gaussians.use_app = True
 
         # Render
@@ -159,6 +165,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pipe.debug = True
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
+        # >7000代，返回渲染的深度图，
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, app_model=app_model,
                             return_plane=iteration>opt.single_view_weight_from_iter, return_depth_normal=iteration>opt.single_view_weight_from_iter)
         image, viewspace_point_tensor, visibility_filter, radii = \
@@ -188,14 +195,37 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration > opt.single_view_weight_from_iter:
             weight = opt.single_view_weight # 默认0.015
             normal = render_pkg["rendered_normal"]
-            depth_normal = render_pkg["depth_normal"]
+            depth_normal = render_pkg["depth_normal"]   # 相机坐标系下的深度法向量
 
             image_weight = (1.0 - get_img_grad_weight(gt_image))    # 由gt图像的归一化梯度计算 梯度权重(1, H, W)：边缘、纹理区域的权重接近0，平滑区域的权重接近1
             image_weight = (image_weight).clamp(0,1).detach() ** 5  # 5次方
             image_weight = erode(image_weight[None,None]).squeeze() # 腐蚀操作，缩小值接近1的区域，即缩小平滑区域
             # 平滑区域的权重大
-            normal_loss = weight * (image_weight * (((depth_normal - normal)).abs().sum(0))).mean()
+            if not dataset.load_normal:
+                normal_loss = weight * (image_weight * (((depth_normal - normal)).abs().sum(0))).mean()
+            else:
+                # 若加载gt normal
+                gt_normal = viewpoint_cam.normal.cuda()
+                # 引入图像梯度，会导致平面物体但纹理丰富区域的法向量约束不够
+                # normal_loss = weight * (image_weight * (((gt_normal - normal)).abs().sum(0))).mean()
+                # normal_loss += (weight * (image_weight * (((gt_normal - depth_normal)).abs().sum(0))).mean())
+                normal_error = (1 - (gt_normal * normal).sum(dim=0))[None]
+                normal_loss = weight * (normal_error).mean()
+                normal_error = (1 - (gt_normal * depth_normal).sum(dim=0))[None]
+                normal_loss += weight * (normal_error).mean()
             loss += (normal_loss)
+
+            if dataset.load_depth:
+                gt_depth = viewpoint_cam.depth.cuda()   # (1,H,W)
+                plane_depth = render_pkg['plane_depth'] # (1,H,W)
+                plane_depth_aligned, scale_factor = depth_align(gt_depth, plane_depth)
+                filter_mask_depth = torch.logical_and(gt_depth > 1e-3, gt_depth > 1e-3)
+                l_depth = depth_EdgeAwareLogL1(plane_depth_aligned, gt_depth, gt_image, filter_mask_depth)
+                depth_loss = 0.05 * l_depth
+                # l_depth_smooth = depth_smooth_loss(plane_depth_aligned, filter_mask_depth)
+                # depth_loss = 0.05 * (l_depth + 0.5 * l_depth_smooth)
+                # print(f"l_depth: {l_depth:.{4}f}, l_depth_smooth: {l_depth_smooth:.{4}f}, depth_loss: {depth_loss:.{4}f}")
+                loss += (depth_loss)
 
             # normal_grad_x = (normal[:,1:-1,:-2] - normal[:,1:-1,2:]).abs()
             # normal_grad_y = (normal[:,:-2,1:-1] - normal[:,2:,1:-1]).abs()
@@ -335,12 +365,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Progress bar
             ema_loss_for_log = 0.4 * image_loss.item() + 0.6 * ema_loss_for_log
             ema_single_view_for_log = 0.4 * normal_loss.item() if normal_loss is not None else 0.0 + 0.6 * ema_single_view_for_log
+            depth_loss_log = 0.4 * depth_loss.item() if depth_loss is not None else 0.0 + 0.6 * depth_loss_log
             ema_multi_view_geo_for_log = 0.4 * geo_loss.item() if geo_loss is not None else 0.0 + 0.6 * ema_multi_view_geo_for_log
             ema_multi_view_pho_for_log = 0.4 * ncc_loss.item() if ncc_loss is not None else 0.0 + 0.6 * ema_multi_view_pho_for_log
             if iteration % 10 == 0:
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     "Single": f"{ema_single_view_for_log:.{5}f}",
+                    "depth": f"{depth_loss_log:.{5}f}",
                     "Geo": f"{ema_multi_view_geo_for_log:.{5}f}",
                     "Pho": f"{ema_multi_view_pho_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}"

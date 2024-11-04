@@ -31,19 +31,21 @@ def erode(bin_img, ksize=12):
 
 def process_image(image_path, resolution, ncc_scale):
     image = Image.open(image_path)
+
     if len(image.split()) > 3:
         resized_image_rgb = torch.cat([PILtoTorch(im, resolution) for im in image.split()[:3]], dim=0)
         loaded_mask = PILtoTorch(image.split()[3], resolution)
         gt_image = resized_image_rgb
         if ncc_scale != 1.0:
-            ncc_resolution = (int(resolution[0]/ncc_scale), int(resolution[1]/ncc_scale))
+            ncc_resolution = (int(resolution[0] / ncc_scale), int(resolution[1] / ncc_scale))
             resized_image_rgb = torch.cat([PILtoTorch(im, ncc_resolution) for im in image.split()[:3]], dim=0)
     else:
         resized_image_rgb = PILtoTorch(image, resolution)
         loaded_mask = None
         gt_image = resized_image_rgb
         if ncc_scale != 1.0:
-            ncc_resolution = (int(resolution[0]/ncc_scale), int(resolution[1]/ncc_scale))
+            # DTU、MipNeRf360、TnT数据集使用0.5，即再扩大1倍
+            ncc_resolution = (int(resolution[0] / ncc_scale), int(resolution[1] / ncc_scale))
             resized_image_rgb = PILtoTorch(image, ncc_resolution)
     gray_image = (0.299 * resized_image_rgb[0] + 0.587 * resized_image_rgb[1] + 0.114 * resized_image_rgb[2])[None]
     return gt_image, gray_image, loaded_mask
@@ -57,6 +59,7 @@ class Camera(nn.Module):
                  preload_img=True, data_device = "cuda"
                  ):
         super(Camera, self).__init__()
+
         self.uid = uid
         self.nearest_id = []
         self.nearest_names = []
@@ -85,6 +88,7 @@ class Camera(nn.Module):
         self.preload_img = preload_img
         self.ncc_scale = ncc_scale
         if self.preload_img:
+            # 若预加载图片数据，默认为True
             gt_image, gray_image, loaded_mask = process_image(self.image_path, self.resolution, ncc_scale)
             self.original_image = gt_image.to(self.data_device)
             self.original_image_gray = gray_image.to(self.data_device)

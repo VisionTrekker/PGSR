@@ -89,18 +89,24 @@ def render_set(model_path, name, iteration, views, scene, gaussians, pipeline, b
         depth_color = cv2.applyColorMap(depth_i, cv2.COLORMAP_JET)
 
         normal = out["rendered_normal"].permute(1,2,0)
-        normal = normal/(normal.norm(dim=-1, keepdim=True)+1.0e-8)
+        normal = normal / (normal.norm(dim=-1, keepdim=True) + 1.0e-8)  # 保存时需归一化到 -1, 1
         normal = normal.detach().cpu().numpy()
-        normal = ((normal+1) * 127.5).astype(np.uint8).clip(0, 255)
+        normal = ((normal+1) * 127.5).astype(np.uint8).clip(0, 255) # 0, 2 ==> 0, 255
+
+        view_subfolder = (view.image_path).split("/")[-2]
+        makedirs(os.path.join(gts_path, view_subfolder), exist_ok=True)
+        makedirs(os.path.join(render_path, view_subfolder), exist_ok=True)
+        makedirs(os.path.join(render_depth_path, view_subfolder), exist_ok=True)
+        makedirs(os.path.join(render_normal_path, view_subfolder), exist_ok=True)
 
         if name == 'test':
-            torchvision.utils.save_image(gt.clamp(0.0, 1.0), os.path.join(gts_path, view.image_name + ".png"))
-            torchvision.utils.save_image(rendering, os.path.join(render_path, view.image_name + ".png"))
+            torchvision.utils.save_image(gt.clamp(0.0, 1.0), os.path.join(gts_path, view_subfolder, view.image_name + ".png"))
+            torchvision.utils.save_image(rendering, os.path.join(render_path, view_subfolder, view.image_name + ".png"))
         else:
             rendering_np = (rendering.permute(1,2,0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
-            cv2.imwrite(os.path.join(render_path, view.image_name + ".jpg"), rendering_np)
-        cv2.imwrite(os.path.join(render_depth_path, view.image_name + ".jpg"), depth_color)
-        cv2.imwrite(os.path.join(render_normal_path, view.image_name + ".jpg"), normal)
+            cv2.imwrite(os.path.join(render_path, view_subfolder, view.image_name + ".jpg"), rendering_np)
+        cv2.imwrite(os.path.join(render_depth_path, view_subfolder, view.image_name + ".jpg"), depth_color)
+        cv2.imwrite(os.path.join(render_normal_path, view_subfolder, view.image_name + ".jpg"), normal)
 
         if use_depth_filter:
             view_dir = torch.nn.functional.normalize(view.get_rays(), p=2, dim=-1)
@@ -125,7 +131,7 @@ def render_set(model_path, name, iteration, views, scene, gaussians, pipeline, b
             pose = np.identity(4)
             pose[:3,:3] = view.R.transpose(-1,-2)
             pose[:3, 3] = view.T
-            color = o3d.io.read_image(os.path.join(render_path, view.image_name + ".jpg"))
+            color = o3d.io.read_image(os.path.join(render_path, view_subfolder, view.image_name + ".jpg"))
             depth = o3d.geometry.Image((ref_depth*1000).astype(np.uint16))
             rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
                 color, depth, depth_scale=1000.0, depth_trunc=max_depth, convert_rgb_to_intensity=False)

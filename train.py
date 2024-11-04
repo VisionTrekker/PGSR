@@ -165,6 +165,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         
         # Loss
+        # 1 图像损失
         ssim_loss = (1.0 - ssim(image, gt_image))
         if 'app_image' in render_pkg and ssim_loss < 0.5:
             app_image = render_pkg['app_image']
@@ -174,28 +175,32 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         image_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * ssim_loss
         loss = image_loss.clone()
         
-        # scale loss
+        # 2 缩放尺度损失
         if visibility_filter.sum() > 0:
-            scale = gaussians.get_scaling[visibility_filter]
-            sorted_scale, _ = torch.sort(scale, dim=-1)
-            min_scale_loss = sorted_scale[...,0]
-            loss += opt.scale_loss_weight * min_scale_loss.mean()
-        # single-view loss
+            # 当前视角下有可见高斯体
+            scale = gaussians.get_scaling[visibility_filter]    # 所有可见高斯体的缩放尺度，(N_visible, 3)
+            sorted_scale, _ = torch.sort(scale, dim=-1)     # 各高斯体的缩放尺度按升序排列，(N_visible, 3)
+            min_scale_loss = sorted_scale[...,0]            # 各高斯体缩放尺度的最小值，(N_visible,)
+            loss += opt.scale_loss_weight * min_scale_loss.mean()   # 所有可见高斯体的最小缩放尺度的均值
+
+        # 3 几何结构正则化
+        # 3.1 单视图损失 (>7000代)
         if iteration > opt.single_view_weight_from_iter:
-            weight = opt.single_view_weight
+            weight = opt.single_view_weight # 默认0.015
             normal = render_pkg["rendered_normal"]
             depth_normal = render_pkg["depth_normal"]
 
-            image_weight = (1.0 - get_img_grad_weight(gt_image))
+            image_weight = (1.0 - get_img_grad_weight(gt_image))    # 由gt图像的归一化梯度计算 梯度权重(1, H, W)：边缘、纹理区域的权重接近0，平滑区域的权重接近1
             image_weight = (image_weight).clamp(0,1).detach() ** 2
             if not opt.wo_image_weight:
-                # image_weight = erode(image_weight[None,None]).squeeze()
+                # image_weight = erode(image_weight[None,None]).squeeze()   # 腐蚀操作，缩小值接近1的区域，即缩小平滑区域
+                # 平滑区域的权重大
                 normal_loss = weight * (image_weight * (((depth_normal - normal)).abs().sum(0))).mean()
             else:
                 normal_loss = weight * (((depth_normal - normal)).abs().sum(0)).mean()
             loss += (normal_loss)
 
-        # multi-view loss
+        # 3.2 多视图损失
         if iteration > opt.multi_view_weight_from_iter:
             nearest_cam = None if len(viewpoint_cam.nearest_id) == 0 else scene.getTrainCameras()[random.sample(viewpoint_cam.nearest_id,1)[0]]
             use_virtul_cam = False

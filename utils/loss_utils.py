@@ -90,17 +90,20 @@ def ssim2(img1, img2, window_size=11):
     return ssim_map.mean(0)
 
 def get_img_grad_weight(img, beta=2.0):
+    """
+    计算图像的归一化梯度
+    """
     _, hd, wd = img.shape 
     bottom_point = img[..., 2:hd,   1:wd-1]
     top_point    = img[..., 0:hd-2, 1:wd-1]
     right_point  = img[..., 1:hd-1, 2:wd]
     left_point   = img[..., 1:hd-1, 0:wd-2]
-    grad_img_x = torch.mean(torch.abs(right_point - left_point), 0, keepdim=True)
-    grad_img_y = torch.mean(torch.abs(top_point - bottom_point), 0, keepdim=True)
-    grad_img = torch.cat((grad_img_x, grad_img_y), dim=0)
-    grad_img, _ = torch.max(grad_img, dim=0)
-    grad_img = (grad_img - grad_img.min()) / (grad_img.max() - grad_img.min())
-    grad_img = torch.nn.functional.pad(grad_img[None,None], (1,1,1,1), mode='constant', value=1.0).squeeze()
+    grad_img_x = torch.mean(torch.abs(right_point - left_point), 0, keepdim=True)   # x方向上的梯度，(3, H-2, W-2) ==> mean (1, H-2, W-2)
+    grad_img_y = torch.mean(torch.abs(top_point - bottom_point), 0, keepdim=True)   # y方向上的梯度
+    grad_img = torch.cat((grad_img_x, grad_img_y), dim=0)   # x、y方向上的梯度，(2, H-2, W-2)
+    grad_img, _ = torch.max(grad_img, dim=0)    # 取梯度的最大值，(1, H-2, W-2)
+    grad_img = (grad_img - grad_img.min()) / (grad_img.max() - grad_img.min())  # 归一化到0,1
+    grad_img = torch.nn.functional.pad(grad_img[None,None], (1,1,1,1), mode='constant', value=1.0).squeeze()    # 在四周填充1个像素的1，(1, H, W)
     return grad_img
 
 def lncc(ref, nea):

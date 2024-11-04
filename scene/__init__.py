@@ -76,9 +76,11 @@ class Scene:
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
+            print("\tLoaded {} cameras".format(len(self.train_cameras[resolution_scale])))
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
-            
+
+            # 计算每个相机的最近邻相机
             print("computing nearest_id")
             self.world_view_transforms = []
             camera_centers = []

@@ -196,8 +196,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # 3.1 单视图损失 (>7000代)
         if iteration > opt.single_view_weight_from_iter:
             weight = opt.single_view_weight # 默认0.015
-            normal = render_pkg["rendered_normal"]
-            depth_normal = render_pkg["depth_normal"]   # 相机坐标系下的深度法向量
+            normal = render_pkg["rendered_normal"]  #  渲染的法向量
+            depth_normal = render_pkg["depth_normal"]   # 从渲染深度图计算的 法向量（相机坐标系）
 
             image_weight = (1.0 - get_img_grad_weight(gt_image))    # 由gt图像的归一化梯度计算 梯度权重(1, H, W)：边缘、纹理区域的权重接近0，平滑区域的权重接近1
             image_weight = (image_weight).clamp(0,1).detach() ** 2
@@ -233,7 +233,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             if dataset.load_depth and viewpoint_cam.depth is not None:
                 gt_depth = viewpoint_cam.depth.cuda()   # (1,H,W)
-                plane_depth = render_pkg['plane_depth'] # (1,H,W)
+                plane_depth = render_pkg['plane_depth'] # 渲染的 无偏深度图（相机坐标系）(1,H,W)
                 plane_depth_aligned, scale_factor = depth_align(gt_depth, plane_depth)
                 filter_mask_depth = torch.logical_and(gt_depth > 1e-3, gt_depth > 1e-3)
                 l_depth = depth_EdgeAwareLogL1(plane_depth_aligned, gt_depth, gt_image, filter_mask_depth)

@@ -20,22 +20,23 @@ from utils.graphics_utils import normal_from_depth_image
 
 def render_normal(viewpoint_cam, depth, offset=None, normal=None, scale=1):
     """
-    从渲染深度图 计算 法向量
+    从渲染的 相机坐标系下的深度图 计算 相机坐标系下的法向量
         viewpoint_cam：当前相机
-        depth: 渲染的深度图，(H, W)
+        depth:  相机坐标系下的无偏深度图，(H, W)
+        offset: 每个像素对应的 对其渲染有贡献的 所有高斯累加的贡献度
     """
     # bg_color: (3), alpha: (H, W)
     # normal_ref: (3, H, W)
-    intrinsic_matrix, extrinsic_matrix = viewpoint_cam.get_calib_matrix_nerf(scale=scale)   # 获取当前相机的内参矩阵和外参矩阵（世界坐标系到相机坐标系的变换矩阵）
+    intrinsic_matrix, extrinsic_matrix = viewpoint_cam.get_calib_matrix_nerf(scale=scale)   # 获取当前相机的 内参矩阵(C2pix) 和 外参矩阵(W2C)
     st = max(int(scale / 2) - 1, 0) # 如果scale>2，则st为(scale/2)-1的向下取整；否则为0
     if offset is not None:
         offset = offset[st::scale,st::scale]    # 如果输入了偏移量，也对其进行采样（减少计算量，并且采样时丢弃初始的行和列避免边缘的影响），采样后的大小为(H-st)//scale
-    # 相机坐标系下的深度图
+    # 从相机坐标系下的深度图 计算法向量（相机坐标系）
     normal_ref = normal_from_depth_image(depth[st::scale,st::scale], 
                                             intrinsic_matrix.to(depth.device), 
                                             extrinsic_matrix.to(depth.device), offset)
 
-    normal_ref = normal_ref.permute(2,0,1)
+    normal_ref = normal_ref.permute(2,0,1)  # (C,H,W)
     return normal_ref
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, 
@@ -143,14 +144,20 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     pts_in_cam = means3D @ viewpoint_camera.world_view_transform[:3,:3] + viewpoint_camera.world_view_transform[3,:3]   # 当前相机坐标系下所有高斯中心的坐标
     depth_z = pts_in_cam[:, 2]  # 所有高斯在当前相机坐标系下的深度
 
-    local_distance = (local_normal * pts_in_cam).sum(-1).abs()  # 计算所有高斯中心沿其法向量方向 与 相机光心的距离投影
+    local_distance = (local_normal * pts_in_cam).sum(-1).abs()  # 相机光心 到 所有高斯法向量垂直平面的 距离 = 相机光心 与 所有高斯中心 投影到高斯法向量方向上的 距离
 
-    # (N, 5)，依次存储：[N, 0-2] 当前相机坐标系下所有高斯的法向量、[N,3] 1.0、[N,4] 所有高斯中心沿其法向量方向 与 相机光心的距离投影
+    # (N, 5)，依次存储：[N, 0-2] 当前相机坐标系下所有高斯的法向量，即最短轴向量；[N,3] 全1.0；[N,4] 相机光心 到 所有高斯法向量垂直平面的 距离
     input_all_map = torch.zeros((means3D.shape[0], 5)).cuda().float()
     input_all_map[:, :3] = local_normal
     input_all_map[:, 3] = 1.0
     input_all_map[:, 4] = local_distance
 
+    # 返回：
+    #   渲染的 RGB图像
+    #   所有高斯投影在当前相机图像平面上的最大半径 数组
+    #   所有高斯 渲染时在透射率>0.5之前 对某像素有贡献的 像素个数 数组
+    #   5通道tensor，[0-2]：渲染的 法向量（相机坐标系）；[3]：每个像素对应的 对其渲染有贡献的 所有高斯累加的贡献度；[4]：渲染的 相机光心 到 每个像素穿过的所有高斯法向量垂直平面的 距离
+    #   渲染的 无偏深度图（相机坐标系）
     rendered_image, radii, out_observe, out_all_map, plane_depth = rasterizer(
         means3D = means3D,
         means2D = means2D,
@@ -160,22 +167,22 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         opacities = opacity,
         scales = scales,
         rotations = rotations,
-        all_map = input_all_map,    # 输入的 [N, 0-2]当前相机坐标系下所有高斯的法向量、[N,3] 1.0、[N,4] 所有高斯中心沿其法向量方向 与 相机光心的距离投影
+        all_map = input_all_map,    # 输入的 5通道tensor，[0-2]: 当前相机坐标系下所有高斯的法向量，即最短轴向量；[3]: 全1.0；[4]: 相机光心 到 所有高斯法向量垂直平面的 距离
         cov3D_precomp = cov3D_precomp)
 
-    rendered_normal = out_all_map[0:3]
-    rendered_alpha = out_all_map[3:4, ]
-    rendered_distance = out_all_map[4:5, ]
+    rendered_normal = out_all_map[0:3]      # 渲染的 法向量（相机坐标系）
+    rendered_alpha = out_all_map[3:4, ]     # 每个像素对应的 对其渲染有贡献的 所有高斯累加的贡献度
+    rendered_distance = out_all_map[4:5, ]  # 渲染的 相机光心 到 每个像素穿过的所有高斯法向量垂直平面的 距离
     
     return_dict =  {"render": rendered_image,
                     "viewspace_points": screenspace_points,
                     "viewspace_points_abs": screenspace_points_abs,
-                    "visibility_filter" : radii > 0,
+                    "visibility_filter" : radii > 0,    # 所有高斯投影在当前相机图像平面上的最大半径>0的mask，(N,)
                     "radii": radii,
-                    "out_observe": out_observe,
-                    "rendered_normal": rendered_normal,
-                    "plane_depth": plane_depth,
-                    "rendered_distance": rendered_distance
+                    "out_observe": out_observe,     # 所有高斯 渲染时在透射率>0.5之前 对某像素有贡献的 像素个数，(N,)
+                    "rendered_normal": rendered_normal, # 渲染的 法向量（相机坐标系）
+                    "plane_depth": plane_depth,     # 渲染的 无偏深度图（相机坐标系）
+                    "rendered_distance": rendered_distance  # 渲染的 相机光心 到 每个像素穿过的所有高斯法向量垂直平面的 距离
                     }
     
     if app_model is not None and pc.use_app:
@@ -185,7 +192,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         return_dict.update({"app_image": app_image})   
 
     if return_depth_normal:
-        # > 7000代，返回从渲染深度图计算的 相机坐标系下的法向量
+        # > 7000代，返回从渲染深度图计算的 法向量（相机坐标系）
         depth_normal = render_normal(viewpoint_camera, plane_depth.squeeze()) * (rendered_alpha).detach()
         return_dict.update({"depth_normal": depth_normal})
     

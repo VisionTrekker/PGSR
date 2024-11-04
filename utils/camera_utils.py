@@ -38,10 +38,6 @@ def loadCam(args, id, cam_info, resolution_scale):
         scale = float(global_down) * float(resolution_scale)
         resolution = (int(orig_w / scale), int(orig_h / scale))
 
-    sys.stdout.write('\r')
-    sys.stdout.write("load camera {}".format(id))
-    sys.stdout.flush()
-
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY,
                   image_width=resolution[0], image_height=resolution[1],    # 实际下采样2倍，args.resolution=2
@@ -57,7 +53,12 @@ def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []
 
     for id, c in enumerate(cam_infos):
+        sys.stdout.write('\r')
+        sys.stdout.write("\tReading camera {}/{}".format(id + 1, len(cam_infos)))
+        sys.stdout.flush()
+
         camera_list.append(loadCam(args, id, c, resolution_scale))
+    sys.stdout.write('\n')
 
     return camera_list
 

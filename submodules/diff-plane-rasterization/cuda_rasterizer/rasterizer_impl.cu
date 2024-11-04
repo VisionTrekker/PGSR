@@ -210,7 +210,7 @@ int CudaRasterizer::Rasterizer::forward(
 	const float scale_modifier,
 	const float* rotations,
 	const float* cov3D_precomp,
-	const float* all_map,
+	const float* all_map,   // 输入的 [N, 0-2]当前相机坐标系下所有高斯的法向量、[N,3] 1.0、[N,4] 所有高斯中心沿其法向量方向 与 相机光心的距离投影
 	const float* viewmatrix,
 	const float* projmatrix,
 	const float* cam_pos,
@@ -335,7 +335,7 @@ int CudaRasterizer::Rasterizer::forward(
 		cam_pos,
 		geomState.means2D,
 		feature_ptr,
-		all_map,
+		all_map,    // 输入的 [N, 0-2]当前相机坐标系下所有高斯的法向量、[N,3] 1.0、[N,4] 所有高斯中心沿其法向量方向 与 相机光心的距离投影
 		geomState.conic_opacity,
 		imgState.accum_alpha,
 		imgState.n_contrib,

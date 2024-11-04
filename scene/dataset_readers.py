@@ -99,8 +99,9 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_depth=
         R = np.transpose(qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
 
-        if intr.model=="SIMPLE_PINHOLE":
+        if intr.model=="SIMPLE_PINHOLE" or intr.model=="SIMPLE_RADIAL":
             focal_length_x = intr.params[0]
+            focal_length_y = focal_length_x
             FovY = focal2fov(focal_length_x, height)
             FovX = focal2fov(focal_length_x, width)
         elif intr.model=="PINHOLE":
@@ -113,12 +114,20 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_depth=
 
         image_path = os.path.join(images_folder, extr.name)
         image_name = os.path.basename(image_path).split(".")[0]
+        if not os.path.exists(image_path):
+            continue
+
+        # if (image_path.split("/")[-2:-1][0] not in ["air_1016", "air_1021", "air_1031", "air_1037", "air_1038", "air_1043", "air_1052", "air_1057", "air_1112", "air_1118", "air_1122"]) or (image_path.split("/")[-3:-2][0] not in ["F1yard_d", "F1yard_out"]):
+        #     i += 1
+        #     continue
+        # if (image_path.split("/")[-2:-1][0] not in ["00", "01", "02", "03"]):
+        #     i += 1
+        #     continue
 
         depth_path = None
         normal_path = None
         if load_depth:
             depth_path = image_path.replace("images", "depth")[:-4] + ".npy"
-            # depth_path = image_path.replace("images", "depth")[:-4] + ".png"
         if load_normal:
             normal_path = image_path.replace("images", "normal")[:-4] + ".npy"
 
@@ -127,6 +136,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_depth=
                               width=width, height=height, fx=focal_length_x, fy=focal_length_y)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
+    print("skip images path num: ", i)
     return cam_infos
 
 def fetchPly(path):
@@ -198,13 +208,23 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, load_depth=False, load_n
     ply_path = os.path.join(path, "sparse/0/points3D.ply")
     bin_path = os.path.join(path, "sparse/0/points3D.bin")
     txt_path = os.path.join(path, "sparse/0/points3D.txt")
-    if not os.path.exists(ply_path) or True:
+    if not os.path.exists(ply_path):
         print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
         try:
             xyz, rgb, _ = read_points3D_binary(bin_path)
             print(f"xyz {xyz.shape}")
         except:
             xyz, rgb, _ = read_points3D_text(txt_path)
+            print(f"xyz {xyz.shape}")
+
+        # xyz_rgb = np.loadtxt(txt_path)
+        # xyz = xyz_rgb[:, :3]
+        # rgb = xyz_rgb[:, 3:6]
+        # print("rgb: {} {} {}".format(rgb[0][0], rgb[0][1], rgb[0][2]))
+        # if rgb[0][0] < 1 or rgb[0][1] < 1 or rgb[0][2] < 1:
+        #     rgb = (rgb * 255).astype(int)
+        # print("rgb: {} {} {}".format(rgb[0][0], rgb[0][1], rgb[0][2]))
+
         storePly(ply_path, xyz, rgb)
     try:
         pcd = fetchPly(ply_path)

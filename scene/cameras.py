@@ -114,6 +114,9 @@ class Camera(nn.Module):
                 self.mask = torch.nn.functional.interpolate(self.mask[None,None], size=(image_height,image_width), mode='bilinear', align_corners=False).squeeze()
                 self.mask = (self.mask < 0.5).to(self.data_device)  # 下采样2倍
 
+            image.close()
+            image = None
+
         self.image_width = image_width
         self.image_height = image_height
         self.resolution = (image_width, image_height)

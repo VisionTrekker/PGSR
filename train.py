@@ -93,6 +93,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     os.system(cmd)
     cmd = f'cp -rf ./utils {dataset.model_path}/'
     os.system(cmd)
+    cmd = f'cp ./run.py {dataset.model_path}/'
+    os.system(cmd)
 
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
@@ -201,9 +203,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image_weight = (image_weight).clamp(0,1).detach() ** 5  # 5次方
             image_weight = erode(image_weight[None,None]).squeeze() # 腐蚀操作，缩小值接近1的区域，即缩小平滑区域
             # 平滑区域的权重大
-            if not dataset.load_normal:
-                normal_loss = weight * (image_weight * (((depth_normal - normal)).abs().sum(0))).mean()
-            else:
+            if dataset.load_normal and viewpoint_cam.normal is not None:
                 # 若加载gt normal
                 gt_normal = viewpoint_cam.normal.cuda()
                 # 引入图像梯度，会导致平面物体但纹理丰富区域的法向量约束不够
@@ -213,9 +213,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 normal_loss = weight * (normal_error).mean()
                 normal_error = (1 - (gt_normal * depth_normal).sum(dim=0))[None]
                 normal_loss += weight * (normal_error).mean()
+            else:
+                normal_loss = weight * (image_weight * (((depth_normal - normal)).abs().sum(0))).mean()
+
             loss += (normal_loss)
 
-            if dataset.load_depth:
+            if dataset.load_depth and viewpoint_cam.depth is not None:
                 gt_depth = viewpoint_cam.depth.cuda()   # (1,H,W)
                 plane_depth = render_pkg['plane_depth'] # (1,H,W)
                 plane_depth_aligned, scale_factor = depth_align(gt_depth, plane_depth)
@@ -262,7 +265,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 pts = gaussians.get_points_from_depth(viewpoint_cam, render_pkg['plane_depth'])
                 pts_in_nearest_cam = pts @ nearest_cam.world_view_transform[:3,:3] + nearest_cam.world_view_transform[3,:3]
                 map_z, d_mask = gaussians.get_points_depth_in_depth_map(nearest_cam, nearest_render_pkg['plane_depth'], pts_in_nearest_cam)
-                
+
                 pts_in_nearest_cam = pts_in_nearest_cam / (pts_in_nearest_cam[:,2:3])
                 pts_in_nearest_cam = pts_in_nearest_cam * map_z.squeeze()[...,None]
                 R = torch.tensor(nearest_cam.R).float().cuda()
@@ -312,7 +315,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             pixels = pixels.reshape(-1,2)[valid_indices]
                             offsets = patch_offsets(patch_size, pixels.device)
                             ori_pixels_patch = pixels.reshape(-1, 1, 2) / viewpoint_cam.ncc_scale + offsets.float()
-                            
+
                             H, W = gt_image_gray.squeeze().shape
                             pixels_patch = ori_pixels_patch.clone()
                             pixels_patch[:, :, 0] = 2 * pixels_patch[:, :, 0] / (W - 1) - 1.0
@@ -335,11 +338,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                         ref_local_d = ref_local_d.reshape(-1)[valid_indices]
                         H_ref_to_neareast = ref_to_neareast_r[None] - \
-                            torch.matmul(ref_to_neareast_t[None,:,None].expand(ref_local_d.shape[0],3,1), 
+                            torch.matmul(ref_to_neareast_t[None,:,None].expand(ref_local_d.shape[0],3,1),
                                         ref_local_n[:,:,None].expand(ref_local_d.shape[0],3,1).permute(0, 2, 1))/ref_local_d[...,None,None]
                         H_ref_to_neareast = torch.matmul(nearest_cam.get_k(nearest_cam.ncc_scale)[None].expand(ref_local_d.shape[0], 3, 3), H_ref_to_neareast)
                         H_ref_to_neareast = H_ref_to_neareast @ viewpoint_cam.get_inv_k(viewpoint_cam.ncc_scale)
-                        
+
                         ## compute neareast frame patch
                         grid = patch_warp(H_ref_to_neareast.reshape(-1,3,3), ori_pixels_patch)
                         grid[:, :, 0] = 2 * grid[:, :, 0] / (W - 1) - 1.0
@@ -347,7 +350,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         _, nearest_image_gray = nearest_cam.get_image()
                         sampled_gray_val = F.grid_sample(nearest_image_gray[None], grid.reshape(1, -1, 1, 2), align_corners=True)
                         sampled_gray_val = sampled_gray_val.reshape(-1, total_patch_size)
-                        
+
                         ## compute loss
                         ncc, ncc_mask = lncc(ref_gray_val, sampled_gray_val)
                         mask = ncc_mask.reshape(-1)

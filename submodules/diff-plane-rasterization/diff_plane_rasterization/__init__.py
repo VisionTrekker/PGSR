@@ -58,7 +58,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         scales,
         rotations,
         cov3Ds_precomp,
-        all_maps,
+        all_maps,   # 输入的 [N, 0-2]当前相机坐标系下所有高斯的法向量、[N,3] 1.0、[N,4] 所有高斯中心沿其法向量方向 与 相机光心的距离投影
         raster_settings,
     ):
 

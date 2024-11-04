@@ -282,15 +282,15 @@ renderCUDA(
 	const float* __restrict__ cam_pos,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
-	const float* __restrict__ all_map,
+	const float* __restrict__ all_map,  // 输入的 [N, 0-2]当前相机坐标系下所有高斯的法向量、[N,3] 1.0、[N,4] 所有高斯中心沿其法向量方向 与 相机光心的距离投影
 	const float4* __restrict__ conic_opacity,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
-	int* __restrict__ out_observe,
-	float* __restrict__ out_all_map,
-	float* __restrict__ out_plane_depth,
+	int* __restrict__ out_observe,      // 输出的 渲染每个像素时 透射率<=0.5之前 穿过的高斯的个数
+	float* __restrict__ out_all_map,    // 5个通道，分别为：输出的 当前相机坐标系下的法向量、1.0、每个像素穿过的所有高斯中心沿其法向量方向 与 相机光心的距离投影
+	float* __restrict__ out_plane_depth,    // 输出的 无偏的 渲染深度图
 	const bool render_geo)
 {
 	// Identify current tile and associated min/max pixel range.
@@ -301,7 +301,7 @@ renderCUDA(
 	const uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	const uint32_t pix_id = W * pix.y + pix.x;
 	const float2 pixf = { (float)pix.x, (float)pix.y };
-	const float2 ray = { (pixf.x - cx) / focal_x, (pixf.y - cy) / focal_y };
+	const float2 ray = { (pixf.x - cx) / focal_x, (pixf.y - cy) / focal_y };    // 该像素 在Z=1相机坐标系中的 归一化射线方向
 	// Check if this thread is associated with a valid pixel or outside.
 	bool inside = pix.x < W&& pix.y < H;
 	// Done threads can help with fetching, but don't rasterize
@@ -371,8 +371,11 @@ renderCUDA(
 			}
 
 			// Eq. (3) from 3D Gaussian splatting paper.
+			// 渲染颜色
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+
+			// 渲染 All_map：[0-2] 当前相机坐标系下的法向量、[3]：1.0、[4]：该像素穿过的所有高斯中心沿其法向量方向 与 相机光心的距离投影
 			if (render_geo) {
 				for (int ch = 0; ch < ALL_MAP; ch++)
 					All_map[ch] += all_map[collected_id[j] * ALL_MAP + ch] * alpha * T;
@@ -398,9 +401,13 @@ renderCUDA(
 		n_contrib[pix_id] = last_contributor;
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+
 		if (render_geo) {
+		    // 渲染 All_map：[0-2] 当前相机坐标系下的法向量、[3]：1.0、[4]：该像素穿过的所有高斯中心沿其法向量方向 与 相机光心的距离投影
 			for (int ch = 0; ch < ALL_MAP; ch++)
 				out_all_map[ch * H * W + pix_id] = All_map[ch];
+
+			// 输出的 无偏的 渲染深度图
 			out_plane_depth[pix_id] = All_map[4] / -(All_map[0] * ray.x + All_map[1] * ray.y + All_map[2] + 1.0e-8);
 		}
 	}

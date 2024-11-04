@@ -149,7 +149,7 @@ def LogL1(pred_depth, gt_depth):
 def depth_EdgeAwareLogL1(pred_depth, gt_depth, gt_image, valid_mask):
     logl1 = LogL1(pred_depth, gt_depth) # 1 H W
 
-    gt_image = gt_image.permute(1, 2, 0)    # H W 1
+    gt_image = gt_image.permute(1, 2, 0)    # H W 3
     grad_img_x = torch.mean(torch.abs(gt_image[:-1, :, :] - gt_image[1:, :, :]), -1, keepdim=True)
     grad_img_y = torch.mean(torch.abs(gt_image[:, :-1, :] - gt_image[:, 1:, :]), -1, keepdim=True)
     lambda_x = torch.exp(-grad_img_x)   # H-1  W   1
@@ -157,15 +157,17 @@ def depth_EdgeAwareLogL1(pred_depth, gt_depth, gt_image, valid_mask):
 
     logl1_x = logl1[:, :-1, :].squeeze(0)   # H-1  W
     logl1_y = logl1[:, :, :-1].squeeze(0)   #  H  W-1
-    loss_x = lambda_x * logl1_x.unsqueeze(-1)
-    loss_y = lambda_y * logl1_y.unsqueeze(-1)
+    loss_x = lambda_x * logl1_x.unsqueeze(-1)   # H-1  W   1
+    loss_y = lambda_y * logl1_y.unsqueeze(-1)   #  H  W-1  1
 
     if valid_mask is not None:
+        # print("\tvalid_mask shape: ", valid_mask.shape)
+        # print("\tpred_depth shape: ", pred_depth.shape)
         assert valid_mask.shape == pred_depth.shape
         valid_mask = valid_mask.permute(1, 2, 0)
-        loss_x = loss_x[valid_mask[:-1, :, :]].mean()
-        loss_y = loss_y[valid_mask[:, :-1, :]].mean()
-    return loss_x + loss_y
+        loss_x = loss_x[valid_mask[:-1, :, :]]
+        loss_y = loss_y[valid_mask[:, :-1, :]]
+    return loss_x.mean() + loss_y.mean()
 
 
 def depth_smooth_loss(depth_map, filter_mask, gt_image=None):
@@ -226,7 +228,7 @@ def depth_align(gt_depth, pred_depth, valid_threshold=1e-3, outlier_percentile=9
 
     if gt_valid.numel() == 0:
         print("Warning: No valid depths found for alignment.")
-        return pred_depth, 1.0
+        return pred_depth.unsqueeze(0), 1.0
 
     # 使用中位数比率法计算初始尺度
     initial_scale = torch.median(gt_valid) / torch.median(pred_valid)

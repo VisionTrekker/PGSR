@@ -42,7 +42,7 @@ RasterizeGaussiansCUDA(
 	const torch::Tensor& rotations,
 	const float scale_modifier,
 	const torch::Tensor& cov3D_precomp,
-	const torch::Tensor& all_map,
+	const torch::Tensor& all_map,   // 输入的 [N, 0-2]当前相机坐标系下所有高斯的法向量、[N,3] 1.0、[N,4] 所有高斯中心沿其法向量方向 与 相机光心的距离投影
 	const torch::Tensor& viewmatrix,
 	const torch::Tensor& projmatrix,
 	const float tan_fovx, 
@@ -106,7 +106,7 @@ RasterizeGaussiansCUDA(
 		scale_modifier,
 		rotations.contiguous().data_ptr<float>(),
 		cov3D_precomp.contiguous().data<float>(), 
-		all_map.contiguous().data<float>(), 
+		all_map.contiguous().data<float>(), // 输入的 [N, 0-2]当前相机坐标系下所有高斯的法向量、[N,3] 1.0、[N,4] 所有高斯中心沿其法向量方向 与 相机光心的距离投影
 		viewmatrix.contiguous().data<float>(), 
 		projmatrix.contiguous().data<float>(),
 		campos.contiguous().data<float>(),

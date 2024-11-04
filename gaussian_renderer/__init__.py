@@ -137,13 +137,15 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         return return_dict
 
     # > 7000代才返回normal
-    global_normal = pc.get_normal(viewpoint_camera) # 获取世界坐标系下所有高斯的法向量
+    global_normal = pc.get_normal(viewpoint_camera) # 获取世界坐标系下所有高斯的法向量，即最短轴向量
     local_normal = global_normal @ viewpoint_camera.world_view_transform[:3,:3] # 当前相机坐标系下 所有高斯的法向量
-    pts_in_cam = means3D @ viewpoint_camera.world_view_transform[:3,:3] + viewpoint_camera.world_view_transform[3,:3]   # 当前相机坐标系下所有高斯中心的坐标
-    depth_z = pts_in_cam[:, 2]  # 高斯在当前相机坐标系下的深度
-    local_distance = (local_normal * pts_in_cam).sum(-1).abs()  # 计算每个高斯中心到法平面的绝对距离
 
-    # (N, 5)，依次存储：当前相机坐标系下的法向量、1.0、高斯中心到法平面的距离
+    pts_in_cam = means3D @ viewpoint_camera.world_view_transform[:3,:3] + viewpoint_camera.world_view_transform[3,:3]   # 当前相机坐标系下所有高斯中心的坐标
+    depth_z = pts_in_cam[:, 2]  # 所有高斯在当前相机坐标系下的深度
+
+    local_distance = (local_normal * pts_in_cam).sum(-1).abs()  # 计算所有高斯中心沿其法向量方向 与 相机光心的距离投影
+
+    # (N, 5)，依次存储：[N, 0-2] 当前相机坐标系下所有高斯的法向量、[N,3] 1.0、[N,4] 所有高斯中心沿其法向量方向 与 相机光心的距离投影
     input_all_map = torch.zeros((means3D.shape[0], 5)).cuda().float()
     input_all_map[:, :3] = local_normal
     input_all_map[:, 3] = 1.0
@@ -158,7 +160,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         opacities = opacity,
         scales = scales,
         rotations = rotations,
-        all_map = input_all_map,
+        all_map = input_all_map,    # 输入的 [N, 0-2]当前相机坐标系下所有高斯的法向量、[N,3] 1.0、[N,4] 所有高斯中心沿其法向量方向 与 相机光心的距离投影
         cov3D_precomp = cov3D_precomp)
 
     rendered_normal = out_all_map[0:3]

@@ -87,7 +87,7 @@ class Camera(nn.Module):
 
         self.original_image, self.image_gray, self.mask = None, None, None
         self.preload_img = preload_img  # 默认为True
-        self.ncc_scale = ncc_scale  # 实际为0.5
+        self.ncc_scale = ncc_scale      # 实际为0.5
 
         resized_depth, resized_normal = None, None
         self.depth, self.normal = None, None

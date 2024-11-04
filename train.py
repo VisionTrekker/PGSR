@@ -93,6 +93,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     os.system(cmd)
     cmd = f'cp -rf ./utils {dataset.model_path}/'
     os.system(cmd)
+    cmd = f'cp ./run.py {dataset.model_path}/'
+    os.system(cmd)
 
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
@@ -202,22 +204,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if not opt.wo_image_weight:
                 # image_weight = erode(image_weight[None,None]).squeeze()   # 腐蚀操作，缩小值接近1的区域，即缩小平滑区域
                 # 平滑区域的权重大
-                if not dataset.load_normal:
+                if dataset.load_normal and viewpoint_cam.normal is not None:
+                    # 若加载gt normal
+                    gt_normal = viewpoint_cam.normal.cuda()
+                    # 引入图像梯度，会导致平面物体但纹理丰富区域的法向量约束不够
+                    # normal_loss = weight * (image_weight * (((gt_normal - normal)).abs().sum(0))).mean()
+                    # normal_loss += (weight * (image_weight * (((gt_normal - depth_normal)).abs().sum(0))).mean())
+                    normal_error = (1 - (gt_normal * normal).sum(dim=0))[None]
+                    normal_loss = weight * (normal_error).mean()
+                    normal_error = (1 - (gt_normal * depth_normal).sum(dim=0))[None]
+                    normal_loss += weight * (normal_error).mean()
+                else:
                     normal_loss = weight * (image_weight * (((depth_normal - normal)).abs().sum(0))).mean()
-                else:
-                    # 若加载gt normal
-                    gt_normal = viewpoint_cam.normal.cuda()
-                    # 引入图像梯度，会导致平面物体但纹理丰富区域的法向量约束不够
-                    # normal_loss = weight * (image_weight * (((gt_normal - normal)).abs().sum(0))).mean()
-                    # normal_loss += (weight * (image_weight * (((gt_normal - depth_normal)).abs().sum(0))).mean())
-                    normal_error = (1 - (gt_normal * normal).sum(dim=0))[None]
-                    normal_loss = weight * (normal_error).mean()
-                    normal_error = (1 - (gt_normal * depth_normal).sum(dim=0))[None]
-                    normal_loss += weight * (normal_error).mean()
             else:
-                if not dataset.load_normal:
-                    normal_loss = weight * (((depth_normal - normal)).abs().sum(0)).mean()
-                else:
+                if dataset.load_normal and viewpoint_cam.normal is not None:
                     # 若加载gt normal
                     gt_normal = viewpoint_cam.normal.cuda()
                     # 引入图像梯度，会导致平面物体但纹理丰富区域的法向量约束不够
@@ -227,9 +227,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     normal_loss = weight * (normal_error).mean()
                     normal_error = (1 - (gt_normal * depth_normal).sum(dim=0))[None]
                     normal_loss += weight * (normal_error).mean()
+                else:
+                    normal_loss = weight * (((depth_normal - normal)).abs().sum(0)).mean()
             loss += (normal_loss)
 
-            if dataset.load_depth:
+            if dataset.load_depth and viewpoint_cam.depth is not None:
                 gt_depth = viewpoint_cam.depth.cuda()   # (1,H,W)
                 plane_depth = render_pkg['plane_depth'] # (1,H,W)
                 plane_depth_aligned, scale_factor = depth_align(gt_depth, plane_depth)

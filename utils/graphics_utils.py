@@ -16,7 +16,9 @@ from typing import NamedTuple
 
 def ndc_2_cam(ndc_xyz, intrinsic, W, H):
     """
-        intrinsic：内参矩阵，C2pix = C2NDC @ NDC2pix
+    获取相机坐标系下的3D点
+        ndc_xyz:    NDC坐标系下3D点
+        intrinsic：  内参矩阵，C2pix = C2NDC @ NDC2pix
     """
     inv_scale = torch.tensor([[W - 1, H - 1]], device=ndc_xyz.device)
     cam_z = ndc_xyz[..., 2:3]   # NDC坐标下3D点的深度值
@@ -27,15 +29,17 @@ def ndc_2_cam(ndc_xyz, intrinsic, W, H):
 
 def depth2point_cam(sampled_depth, ref_intrinsic):
     """
-        sampled_depth: (1,1,1,H,W)
-        ref_intrinsic: (1,3,3)
+    获取 NDC坐标系和相机坐标系下的3D点
+        sampled_depth: 相机坐标系下的深度图，(1,1,1,H,W)
+        ref_intrinsic: 内参矩阵 C2pix，(1,3,3)
     """
     B, N, C, H, W = sampled_depth.shape
     valid_z = sampled_depth
     # 图像坐标系中x、y方向归一化到(0,1)的像素坐标
-    valid_x = torch.arange(W, dtype=torch.float32, device=sampled_depth.device) / (W - 1)   # (W,)
-    valid_y = torch.arange(H, dtype=torch.float32, device=sampled_depth.device) / (H - 1)   # (H,)
-    valid_y, valid_x = torch.meshgrid(valid_y, valid_x) # 两个维度都为(H,W)
+    valid_x = torch.arange(W, dtype=torch.float32, device=sampled_depth.device) / (W - 1)
+    valid_y = torch.arange(H, dtype=torch.float32, device=sampled_depth.device) / (H - 1)
+    valid_x, valid_y = torch.meshgrid(valid_x, valid_y, indexing='xy')  # 两个维度都为(H,W)
+    # B,N,H,W
     # 拓展到与深度相同的维度，(1,1,1,H,W)
     valid_x = valid_x[None, None, None, ...].expand(B, N, C, -1, -1)
     valid_y = valid_y[None, None, None, ...].expand(B, N, C, -1, -1)
@@ -47,11 +51,12 @@ def depth2point_cam(sampled_depth, ref_intrinsic):
 
 def depth2point_world(depth_image, intrinsic_matrix, extrinsic_matrix):
     """
-        depth_image：(H, W),
-        intrinsic_matrix：(3, 3)
-        extrinsic_matrix： (4, 4)
+    获取相机坐标系下的 3D点
+        depth_image：    相机坐标系下的深度图，(H, W),
+        intrinsic_matrix：内参矩阵 C2pix，(3, 3)
+        extrinsic_matrix：外参矩阵 W2C，(4, 4)
     """
-    # 获取相机坐标下下的3D点坐标，(H*W, 3)
+    # 获取NDC坐标系 和 相机坐标系下的3D点坐标，(H*W, 3)
     _, xyz_cam = depth2point_cam(depth_image[None,None,None,...], intrinsic_matrix[None,...])
     xyz_cam = xyz_cam.reshape(-1,3)
     # xyz_world = torch.cat([xyz_cam, torch.ones_like(xyz_cam[...,0:1])], axis=-1) @ torch.inverse(extrinsic_matrix).transpose(0,1)
@@ -60,7 +65,12 @@ def depth2point_world(depth_image, intrinsic_matrix, extrinsic_matrix):
     return xyz_cam
 
 def depth_pcd2normal(xyz, offset=None, gt_image=None):
-    hd, wd, _ = xyz.shape 
+    """
+    从 相机坐标系下的3D点 计算4邻域的法向量（相机坐标系）
+        xyz:    相机坐标系下的3D点
+        offset: 每个像素对应的 对其渲染有贡献的 所有高斯累加的贡献度
+    """
+    hd, wd, _ = xyz.shape
     if offset is not None:
         ix, iy = torch.meshgrid(
             torch.arange(wd), torch.arange(hd), indexing='xy')
@@ -90,17 +100,18 @@ def depth_pcd2normal(xyz, offset=None, gt_image=None):
 
 def normal_from_depth_image(depth, intrinsic_matrix, extrinsic_matrix, offset=None, gt_image=None):
     """
-    从深度图计算法向量
-        depth： 渲染深度图，(H, W)
-        intrinsic_matrix：(3, 3)
-        extrinsic_matrix：(4, 4)
-        offset：
-        gt_image：
+    从相机坐标系下的深度图 计算法向量
+        depth： 相机坐标系下的深度图，(H, W)
+        intrinsic_matrix：   内参矩阵 C2pix，(3, 3)
+        extrinsic_matrix：   外参矩阵 W2C，(4, 4)
+        offset：每个像素对应的 对其渲染有贡献的 所有高斯累加的贡献度
+        gt_image：None
         return：计算的法向量图，(H, W, 3)
     """
-    # 相机坐标系下的3D点
+    # 获取相机坐标系下的3D点
     xyz_world = depth2point_world(depth, intrinsic_matrix, extrinsic_matrix) # (HxW, 3)
     xyz_world = xyz_world.reshape(*depth.shape, 3)  # (H, W, 3)
+    # 从相机坐标系下的3D点 计算法向量（相机坐标系）
     xyz_normal = depth_pcd2normal(xyz_world, offset, gt_image)  # (H, W, 3)
 
     return xyz_normal
@@ -205,7 +216,7 @@ def focal2fov(focal, pixels):
 
 def patch_offsets(h_patch_size, device):
     offsets = torch.arange(-h_patch_size, h_patch_size + 1, device=device)
-    return torch.stack(torch.meshgrid(offsets, offsets)[::-1], dim=-1).view(1, -1, 2)
+    return torch.stack(torch.meshgrid(offsets, offsets, indexing='xy')[::-1], dim=-1).view(1, -1, 2)
 
 def patch_warp(H, uv):
     B, P = uv.shape[:2]

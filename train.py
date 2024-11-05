@@ -190,37 +190,50 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             scale = gaussians.get_scaling[visibility_filter]    # 所有可见高斯体的缩放尺度，(N_visible, 3)
             sorted_scale, _ = torch.sort(scale, dim=-1)     # 各高斯体的缩放尺度按升序排列，(N_visible, 3)
             min_scale_loss = sorted_scale[...,0]            # 各高斯体缩放尺度的最小值，(N_visible,)
-            loss += 100.0 * min_scale_loss.mean()           # 所有可见高斯体的最小缩放尺度的均值
+            loss += opt.scale_loss_weight * min_scale_loss.mean()   # 所有可见高斯体的最小缩放尺度的均值
 
         # 3 几何结构正则化
         # 3.1 单视图损失 (>7000代)
         if iteration > opt.single_view_weight_from_iter:
             weight = opt.single_view_weight # 默认0.015
-            normal = render_pkg["rendered_normal"]
-            depth_normal = render_pkg["depth_normal"]   # 相机坐标系下的深度法向量
+            normal = render_pkg["rendered_normal"]  #  渲染的法向量
+            depth_normal = render_pkg["depth_normal"]   # 从渲染深度图计算的 法向量（相机坐标系）
 
             image_weight = (1.0 - get_img_grad_weight(gt_image))    # 由gt图像的归一化梯度计算 梯度权重(1, H, W)：边缘、纹理区域的权重接近0，平滑区域的权重接近1
-            image_weight = (image_weight).clamp(0,1).detach() ** 5  # 5次方
-            image_weight = erode(image_weight[None,None]).squeeze() # 腐蚀操作，缩小值接近1的区域，即缩小平滑区域
-            # 平滑区域的权重大
-            if dataset.load_normal and viewpoint_cam.normal is not None:
-                # 若加载gt normal
-                gt_normal = viewpoint_cam.normal.cuda()
-                # 引入图像梯度，会导致平面物体但纹理丰富区域的法向量约束不够
-                # normal_loss = weight * (image_weight * (((gt_normal - normal)).abs().sum(0))).mean()
-                # normal_loss += (weight * (image_weight * (((gt_normal - depth_normal)).abs().sum(0))).mean())
-                normal_error = (1 - (gt_normal * normal).sum(dim=0))[None]
-                normal_loss = weight * (normal_error).mean()
-                normal_error = (1 - (gt_normal * depth_normal).sum(dim=0))[None]
-                normal_loss += weight * (normal_error).mean()
+            image_weight = (image_weight).clamp(0,1).detach() ** 2
+            if not opt.wo_image_weight:
+                # image_weight = erode(image_weight[None,None]).squeeze()   # 腐蚀操作，缩小值接近1的区域，即缩小平滑区域
+                # 平滑区域的权重大
+                if dataset.load_normal and viewpoint_cam.normal is not None:
+                    # 若加载gt normal
+                    gt_normal = viewpoint_cam.normal.cuda()
+                    # 引入图像梯度，会导致平面物体但纹理丰富区域的法向量约束不够
+                    # normal_loss = weight * (image_weight * (((gt_normal - normal)).abs().sum(0))).mean()
+                    # normal_loss += (weight * (image_weight * (((gt_normal - depth_normal)).abs().sum(0))).mean())
+                    normal_error = (1 - (gt_normal * normal).sum(dim=0))[None]
+                    normal_loss = weight * (normal_error).mean()
+                    normal_error = (1 - (gt_normal * depth_normal).sum(dim=0))[None]
+                    normal_loss += weight * (normal_error).mean()
+                else:
+                    normal_loss = weight * (image_weight * (((depth_normal - normal)).abs().sum(0))).mean()
             else:
-                normal_loss = weight * (image_weight * (((depth_normal - normal)).abs().sum(0))).mean()
-
+                if dataset.load_normal and viewpoint_cam.normal is not None:
+                    # 若加载gt normal
+                    gt_normal = viewpoint_cam.normal.cuda()
+                    # 引入图像梯度，会导致平面物体但纹理丰富区域的法向量约束不够
+                    # normal_loss = weight * (image_weight * (((gt_normal - normal)).abs().sum(0))).mean()
+                    # normal_loss += (weight * (image_weight * (((gt_normal - depth_normal)).abs().sum(0))).mean())
+                    normal_error = (1 - (gt_normal * normal).sum(dim=0))[None]
+                    normal_loss = weight * (normal_error).mean()
+                    normal_error = (1 - (gt_normal * depth_normal).sum(dim=0))[None]
+                    normal_loss += weight * (normal_error).mean()
+                else:
+                    normal_loss = weight * (((depth_normal - normal)).abs().sum(0)).mean()
             loss += (normal_loss)
 
             if dataset.load_depth and viewpoint_cam.depth is not None:
                 gt_depth = viewpoint_cam.depth.cuda()   # (1,H,W)
-                plane_depth = render_pkg['plane_depth'] # (1,H,W)
+                plane_depth = render_pkg['plane_depth'] # 渲染的 无偏深度图（相机坐标系）(1,H,W)
                 plane_depth_aligned, scale_factor = depth_align(gt_depth, plane_depth)
                 filter_mask_depth = torch.logical_and(gt_depth > 1e-3, gt_depth > 1e-3)
                 l_depth = depth_EdgeAwareLogL1(plane_depth_aligned, gt_depth, gt_image, filter_mask_depth)
@@ -230,16 +243,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 # print(f"l_depth: {l_depth:.{4}f}, l_depth_smooth: {l_depth_smooth:.{4}f}, depth_loss: {depth_loss:.{4}f}")
                 loss += (depth_loss)
 
-            # normal_grad_x = (normal[:,1:-1,:-2] - normal[:,1:-1,2:]).abs()
-            # normal_grad_y = (normal[:,:-2,1:-1] - normal[:,2:,1:-1]).abs()
-            # smooth_normal_loss = 0.002 * ((normal_grad_x + normal_grad_y)).mean()
-            # distance_grad_x = (render_pkg['rendered_distance'][:,1:-1,:-2] - render_pkg['rendered_distance'][:,1:-1,2:]).abs()
-            # distance_grad_y = (render_pkg['rendered_distance'][:,:-2,1:-1] - render_pkg['rendered_distance'][:,2:,1:-1]).abs()
-            # smooth_distance_loss = 0.002 * (image_weight[None,1:-1,1:-1] * (distance_grad_x + distance_grad_y)).mean()
-            # loss += (smooth_normal_loss)
-            # loss += (smooth_distance_loss)
-
-        # 3.1 多视图损失 (>7000代)
+        # 3.2 多视图损失 (>7000代)
         if iteration > opt.multi_view_weight_from_iter:
             nearest_cam = None if len(viewpoint_cam.nearest_id) == 0 else scene.getTrainCameras()[random.sample(viewpoint_cam.nearest_id,1)[0]]
             use_virtul_cam = False
@@ -265,7 +269,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 pts = gaussians.get_points_from_depth(viewpoint_cam, render_pkg['plane_depth'])
                 pts_in_nearest_cam = pts @ nearest_cam.world_view_transform[:3,:3] + nearest_cam.world_view_transform[3,:3]
                 map_z, d_mask = gaussians.get_points_depth_in_depth_map(nearest_cam, nearest_render_pkg['plane_depth'], pts_in_nearest_cam)
-
+                
                 pts_in_nearest_cam = pts_in_nearest_cam / (pts_in_nearest_cam[:,2:3])
                 pts_in_nearest_cam = pts_in_nearest_cam * map_z.squeeze()[...,None]
                 R = torch.tensor(nearest_cam.R).float().cuda()
@@ -276,9 +280,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             [pts_in_view_cam[:,0] * viewpoint_cam.Fx / pts_in_view_cam[:,2] + viewpoint_cam.Cx,
                             pts_in_view_cam[:,1] * viewpoint_cam.Fy / pts_in_view_cam[:,2] + viewpoint_cam.Cy], -1).float()
                 pixel_noise = torch.norm(pts_projections - pixels.reshape(*pts_projections.shape), dim=-1)
-                d_mask = d_mask & (pixel_noise < pixel_noise_th)
-                weights = (1.0 / torch.exp(pixel_noise)).detach()
-                weights[~d_mask] = 0
+                if not opt.wo_use_geo_occ_aware:
+                    d_mask = d_mask & (pixel_noise < pixel_noise_th)
+                    weights = (1.0 / torch.exp(pixel_noise)).detach()
+                    weights[~d_mask] = 0
+                else:
+                    d_mask = d_mask
+                    weights = torch.ones_like(pixel_noise)
+                    weights[~d_mask] = 0
                 if iteration % 200 == 0:
                     gt_img_show = ((gt_image).permute(1,2,0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
                     if 'app_image' in render_pkg:
@@ -293,8 +302,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     depth_i = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
                     depth_i = (depth_i * 255).clip(0, 255).astype(np.uint8)
                     depth_color = cv2.applyColorMap(depth_i, cv2.COLORMAP_JET)
-                    row0 = np.concatenate([gt_img_show, img_show, normal_show], axis=1)
-                    row1 = np.concatenate([d_mask_show_color, depth_color, depth_normal_show], axis=1)
+                    distance = render_pkg['rendered_distance'].squeeze().detach().cpu().numpy()
+                    distance_i = (distance - distance.min()) / (distance.max() - distance.min() + 1e-20)
+                    distance_i = (distance_i * 255).clip(0, 255).astype(np.uint8)
+                    distance_color = cv2.applyColorMap(distance_i, cv2.COLORMAP_JET)
+                    image_weight = image_weight.detach().cpu().numpy()
+                    image_weight = (image_weight * 255).clip(0, 255).astype(np.uint8)
+                    image_weight_color = cv2.applyColorMap(image_weight, cv2.COLORMAP_JET)
+                    row0 = np.concatenate([gt_img_show, img_show, normal_show, distance_color], axis=1)
+                    row1 = np.concatenate([d_mask_show_color, depth_color, depth_normal_show, image_weight_color], axis=1)
                     image_to_show = np.concatenate([row0, row1], axis=0)
                     cv2.imwrite(os.path.join(debug_path, "%05d"%iteration + "_" + viewpoint_cam.image_name + ".jpg"), image_to_show)
 
@@ -315,7 +331,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             pixels = pixels.reshape(-1,2)[valid_indices]
                             offsets = patch_offsets(patch_size, pixels.device)
                             ori_pixels_patch = pixels.reshape(-1, 1, 2) / viewpoint_cam.ncc_scale + offsets.float()
-
+                            
                             H, W = gt_image_gray.squeeze().shape
                             pixels_patch = ori_pixels_patch.clone()
                             pixels_patch[:, :, 0] = 2 * pixels_patch[:, :, 0] / (W - 1) - 1.0
@@ -332,17 +348,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                         ref_local_d = render_pkg['rendered_distance'].squeeze()
                         # rays_d = viewpoint_cam.get_rays()
-                        # rendered_normal2 = rendered_normal.reshape(-1,3)
+                        # rendered_normal2 = render_pkg["rendered_normal"].permute(1,2,0).reshape(-1,3)
                         # ref_local_d = render_pkg['plane_depth'].view(-1) * ((rendered_normal2 * rays_d.reshape(-1,3)).sum(-1).abs())
-                        # ref_local_d = ref_local_d.reshape(H,W)
+                        # ref_local_d = ref_local_d.reshape(*render_pkg['plane_depth'].shape)
 
                         ref_local_d = ref_local_d.reshape(-1)[valid_indices]
                         H_ref_to_neareast = ref_to_neareast_r[None] - \
-                            torch.matmul(ref_to_neareast_t[None,:,None].expand(ref_local_d.shape[0],3,1),
+                            torch.matmul(ref_to_neareast_t[None,:,None].expand(ref_local_d.shape[0],3,1), 
                                         ref_local_n[:,:,None].expand(ref_local_d.shape[0],3,1).permute(0, 2, 1))/ref_local_d[...,None,None]
                         H_ref_to_neareast = torch.matmul(nearest_cam.get_k(nearest_cam.ncc_scale)[None].expand(ref_local_d.shape[0], 3, 3), H_ref_to_neareast)
                         H_ref_to_neareast = H_ref_to_neareast @ viewpoint_cam.get_inv_k(viewpoint_cam.ncc_scale)
-
+                        
                         ## compute neareast frame patch
                         grid = patch_warp(H_ref_to_neareast.reshape(-1,3,3), ori_pixels_patch)
                         grid[:, :, 0] = 2 * grid[:, :, 0] / (W - 1) - 1.0
@@ -350,7 +366,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         _, nearest_image_gray = nearest_cam.get_image()
                         sampled_gray_val = F.grid_sample(nearest_image_gray[None], grid.reshape(1, -1, 1, 2), align_corners=True)
                         sampled_gray_val = sampled_gray_val.reshape(-1, total_patch_size)
-
+                        
                         ## compute loss
                         ncc, ncc_mask = lncc(ref_gray_val, sampled_gray_val)
                         mask = ncc_mask.reshape(-1)
@@ -432,10 +448,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
                 app_model.save_weights(scene.model_path, iteration)
-
-            if iteration % 500 == 0:
-                torch.cuda.empty_cache()
     
+    app_model.save_weights(scene.model_path, opt.iterations)
     torch.cuda.empty_cache()
 
 def prepare_output_and_logger(args):    

@@ -73,6 +73,22 @@ class Scene:
         self.cameras_extent = scene_info.nerf_normalization["radius"]
         print(f"cameras_extent {self.cameras_extent}")
 
+        orig_w, orig_h = (scene_info.train_cameras[0].width, scene_info.train_cameras[0].height)
+        dataset_size_in_GB = (
+                1.0 * (len(scene_info.train_cameras) + len(scene_info.test_cameras))
+                * orig_w * orig_h * 3
+                / 1024 / 1024 / 1024
+        )
+        # log_file.write(f"Dataset size: {dataset_size_in_GB} GB\n")
+        if dataset_size_in_GB < args.preload_dataset_to_gpu_threshold:  # 10GB memory limit for dataset
+            args.data_device = "cuda"
+            print(
+                f"[NOTE]: Dataset size: {dataset_size_in_GB} GB < {args.preload_dataset_to_gpu_threshold} , data_device is set to {args.data_device}\n")
+        else:
+            args.data_device = "cpu"
+            print(
+                f"[NOTE]: Dataset size: {dataset_size_in_GB} GB >= {args.preload_dataset_to_gpu_threshold}, data_device is set to {args.data_device}\n")
+
         self.multi_view_num = args.multi_view_num
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")

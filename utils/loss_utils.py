@@ -261,3 +261,52 @@ def depth_align(gt_depth, pred_depth, valid_threshold=1e-3, outlier_percentile=9
     aligned_pred_depth = pred_depth * scale # H W
 
     return aligned_pred_depth.unsqueeze(0), scale
+
+def depth_align_scale_offset(gt_depth, pred_depth, valid_threshold=1e-3, outlier_percentile=95):
+    """
+    返回与gt深度图对齐后的 渲染深度图，涉及scale、offset
+        valid_threshold: 有效深度值的阈值
+        outlier_percentile: 用于去除异常值的百分位数
+        """
+    if gt_depth.dim() == 3:
+        gt_depth = gt_depth.squeeze(0)
+    if pred_depth.dim() == 3:
+        pred_depth = pred_depth.squeeze(0)
+
+    # 创建有效深度的掩码
+    valid_mask = (gt_depth > valid_threshold) & (pred_depth > valid_threshold)
+
+    gt_valid = gt_depth[valid_mask]
+    pred_valid = pred_depth[valid_mask]
+
+    if gt_valid.numel() == 0:
+        print("Warning: No valid depths found for alignment.")
+        return pred_depth.unsqueeze(0), 1.0
+
+    # 初始尺度和偏移计算（中位数法）
+    initial_scale = torch.median(gt_valid) / torch.median(pred_valid)
+    scaled_pred = pred_valid * initial_scale
+    ratios = gt_valid / scaled_pred # 比例对齐的渲染深度图 与 gt深度 的比率
+
+    # 去除离群点：先计算深度比率中分别在2.5%、97.5%处索引的值，符合要求的有效深度
+    lower_bound = torch.quantile(ratios, 0.5 - outlier_percentile / 200)
+    upper_bound = torch.quantile(ratios, 0.5 + outlier_percentile / 200)
+    inlier_mask = (ratios >= lower_bound) & (ratios <= upper_bound)
+
+    gt_inliers = gt_valid[inlier_mask]
+    pred_inliers = pred_valid[inlier_mask]
+
+    # 计算gt和pred的中位数
+    t_gt = torch.median(gt_inliers)
+    t_pred = torch.median(pred_inliers)
+    s_gt = torch.mean(torch.abs(gt_inliers - t_gt))
+    s_pred = torch.mean(torch.abs(pred_inliers - t_pred))
+
+    # 计算 scale 和 offset
+    scale = s_gt / s_pred
+    offset = t_gt - t_pred * scale
+
+    # 与gt depth尺度对齐后的渲染深度图
+    aligned_pred_depth = pred_depth * scale + offset # H W
+
+    return aligned_pred_depth.unsqueeze(0)

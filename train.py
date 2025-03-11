@@ -199,36 +199,35 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             normal = render_pkg["rendered_normal"]  #  渲染的法向量
             depth_normal = render_pkg["depth_normal"]   # 从渲染深度图计算的 法向量（相机坐标系）
 
-            image_weight = (1.0 - get_img_grad_weight(gt_image))    # 由gt图像的归一化梯度计算 梯度权重(1, H, W)：边缘、纹理区域的权重接近0，平滑区域的权重接近1
+            # 平滑区域的权重大
+            image_weight = (1.0 - get_img_grad_weight(gt_image))    # 由gt图像的归一化梯度计算 梯度权重(1, H, W)：边缘、纹理区域的权重接近0，平滑区域的权重接近1。
             image_weight = (image_weight).clamp(0,1).detach() ** 2
             if not opt.wo_image_weight:
+                # 问题：引入图像梯度，会导致平面物体但纹理丰富区域的法向量约束不够
                 # image_weight = erode(image_weight[None,None]).squeeze()   # 腐蚀操作，缩小值接近1的区域，即缩小平滑区域
-                # 平滑区域的权重大
                 if dataset.load_normal and viewpoint_cam.normal is not None:
-                    # 若加载gt normal
                     gt_normal = viewpoint_cam.normal.cuda()
-                    # 引入图像梯度，会导致平面物体但纹理丰富区域的法向量约束不够
-                    # normal_loss = weight * (image_weight * (((gt_normal - normal)).abs().sum(0))).mean()
-                    # normal_loss += (weight * (image_weight * (((gt_normal - depth_normal)).abs().sum(0))).mean())
-                    normal_error = (1 - (gt_normal * normal).sum(dim=0))[None]
-                    normal_loss = weight * (normal_error).mean()
-                    normal_error = (1 - (gt_normal * depth_normal).sum(dim=0))[None]
-                    normal_loss += weight * (normal_error).mean()
+                    # l1
+                    normal_loss = weight * (image_weight * ((gt_normal - normal).abs().sum(dim=0))).mean()
+                    normal_loss += (weight * (image_weight * ((gt_normal - depth_normal).abs().sum(dim=0))).mean())
+                    # cos
+                    # normal_error = (1.0 - (image_weight * ((gt_normal * normal).sum(dim=0).clamp(-1, 1)))).mean()  # 1 - (H,W) --> (1,)
+                    # normal_error += ((1.0 - (image_weight * ((gt_normal * depth_normal).sum(dim=0).clamp(-1, 1)))).mean())
+                    # normal_loss = weight * normal_error
                 else:
-                    normal_loss = weight * (image_weight * (((depth_normal - normal)).abs().sum(0))).mean()
+                    normal_loss = weight * (image_weight * ((depth_normal - normal).abs().sum(dim=0))).mean()
             else:
                 if dataset.load_normal and viewpoint_cam.normal is not None:
-                    # 若加载gt normal
                     gt_normal = viewpoint_cam.normal.cuda()
-                    # 引入图像梯度，会导致平面物体但纹理丰富区域的法向量约束不够
-                    # normal_loss = weight * (image_weight * (((gt_normal - normal)).abs().sum(0))).mean()
-                    # normal_loss += (weight * (image_weight * (((gt_normal - depth_normal)).abs().sum(0))).mean())
-                    normal_error = (1 - (gt_normal * normal).sum(dim=0))[None]
-                    normal_loss = weight * (normal_error).mean()
-                    normal_error = (1 - (gt_normal * depth_normal).sum(dim=0))[None]
-                    normal_loss += weight * (normal_error).mean()
+                    # l1
+                    normal_loss = weight * ((gt_normal - normal).abs().sum(dim=0)).mean()
+                    normal_loss += (weight * ((gt_normal - depth_normal).abs().sum(dim=0)).mean())
+                    # cos
+                    # normal_error = (1.0 - ((gt_normal * normal).sum(dim=0).clamp(-1, 1))).mean()  # 1 - (H,W) --> (1,)
+                    # normal_error += ((1.0 - ((gt_normal * depth_normal).sum(dim=0).clamp(-1, 1))).mean())
+                    # normal_loss = weight * normal_error
                 else:
-                    normal_loss = weight * (((depth_normal - normal)).abs().sum(0)).mean()
+                    normal_loss = weight * ((depth_normal - normal).abs().sum(dim=0)).mean()
             loss += (normal_loss)
 
             if dataset.load_depth and viewpoint_cam.depth is not None:
@@ -406,6 +405,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
+                # if iteration == saving_iterations[-1]:
+                #     scene.save_purn_large(iteration)
                     
             # Densification
             if iteration < opt.densify_until_iter:
@@ -418,7 +419,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, opt.densify_abs_grad_threshold, 
-                                                opt.opacity_cull_threshold, scene.cameras_extent, size_threshold)
+                                                opt.opacity_cull_threshold, scene.cameras_extent, size_threshold, split_mode=dataset.split_mode)
             
             # multi-view observe trim
             if opt.use_multi_view_trim and iteration % 1000 == 0 and iteration < opt.densify_until_iter:

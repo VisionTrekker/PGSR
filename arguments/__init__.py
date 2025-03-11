@@ -63,6 +63,7 @@ class ModelParams(ParamGroup):
 
         self.load_depth = False
         self.load_normal = False
+        self.split_mode = "default"
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

@@ -151,12 +151,12 @@ import os
 # print(cmd)
 # os.system(cmd)
 
-GPU_ID = 3
+GPU_ID = 2
 print("----------------------------------------")
 cmd = f'CUDA_VISIBLE_DEVICES={GPU_ID} \
         python train.py \
-        -s ../../Dataset/3DGS_Dataset/SmallCampus \
-        -m output/SmallCampus_nomulti_nogradmeans3D_0.1 \
+        -s ../../remote_data/dataset_reality/test/TQZZ_indoor \
+        -m output/TQZZ_outdoor_nomulti_nogradmeans3D_0.1 \
         -r 1 \
         --port 6031 \
         --data_device "cpu" \
@@ -164,18 +164,19 @@ cmd = f'CUDA_VISIBLE_DEVICES={GPU_ID} \
         --single_view_weight_from_iter 7_000 \
         --densify_abs_grad_threshold 0.0004 \
         --opacity_cull_threshold 0.005 \
-        --iterations 30000 \
+        --iterations 60000 \
         --split_mode "default" \
-        --densify_from_iter 15000 \
-        --densify_until_iter 0 \
+        --densify_from_iter 20000 \
+        --densify_until_iter 30000 \
         --densification_interval 100 \
         --position_lr_init 0.000016 \
-        --opacity_reset_interval 30000 \
+        --opacity_reset_interval 60000 \
+        --load_normal \
         --single_view_weight_from_iter 7000 \
         --single_view_weight 0.1 \
-        --multi_view_weight_from_iter 30000 \
-        --test_iterations 7000 10000 15000 30000 \
-	    --save_iterations 30000 \
+        --multi_view_weight_from_iter 60000 \
+        --test_iterations 7000 15000 30000 60000 \
+	    --save_iterations 30000 60000 \
         '
 print(cmd)
 os.system(cmd)

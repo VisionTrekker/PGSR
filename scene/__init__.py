@@ -79,6 +79,18 @@ class Scene:
                 * orig_w * orig_h * 3
                 / 1024 / 1024 / 1024
         )
+        if args.load_normal:
+            dataset_size_in_GB += (
+                    1.0 * (len(scene_info.train_cameras) + len(scene_info.test_cameras))
+                    * orig_w * orig_h * 3
+                    / 1024 / 1024 / 1024
+            )
+        if args.load_depth:
+            dataset_size_in_GB += (
+                    1.0 * (len(scene_info.train_cameras) + len(scene_info.test_cameras))
+                    * orig_w * orig_h
+                    / 1024 / 1024 / 1024
+            )
         # log_file.write(f"Dataset size: {dataset_size_in_GB} GB\n")
         if dataset_size_in_GB < args.preload_dataset_to_gpu_threshold:  # 10GB memory limit for dataset
             args.data_device = "cuda"

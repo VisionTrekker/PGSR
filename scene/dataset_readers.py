@@ -84,6 +84,7 @@ def load_poses(pose_path, num):
     return poses
 
 def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_depth=False, load_normal=False):
+    print("Load depth: ", load_depth, " Load normal: ", load_normal)
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -137,7 +138,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_depth=
                               width=width, height=height, fx=focal_length_x, fy=focal_length_y)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
-    print("skip images path num: ", i)
+    # print("skip images path num: ", i)
     return cam_infos
 
 def fetchPly(path):

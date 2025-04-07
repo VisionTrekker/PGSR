@@ -155,17 +155,16 @@ GPU_ID = 2
 print("----------------------------------------")
 cmd = f'CUDA_VISIBLE_DEVICES={GPU_ID} \
         python train.py \
-        -s ../../remote_data/dataset_reality/test/TQZZ_indoor \
-        -m output/TQZZ_outdoor_nomulti_nogradmeans3D_0.1 \
+        -s ../../remote_data/dataset_reality/test/t100pro_in_talandB1 \
+        -m output/t100pro_in_talandB1_normalGT \
         -r 1 \
         --port 6031 \
         --data_device "cpu" \
         --ncc_scale 0.5 \
-        --single_view_weight_from_iter 7_000 \
         --densify_abs_grad_threshold 0.0004 \
         --opacity_cull_threshold 0.005 \
         --iterations 60000 \
-        --split_mode "default" \
+        --split_mode "max_scale" \
         --densify_from_iter 20000 \
         --densify_until_iter 30000 \
         --densification_interval 100 \
